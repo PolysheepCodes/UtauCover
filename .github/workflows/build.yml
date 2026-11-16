@@ -19,20 +19,36 @@ on:
     branches: [main]
     paths: ["utaucover/**", "packaging/**", "pyproject.toml", ".github/workflows/build.yml"]
   workflow_dispatch:
+    inputs:
+      target:
+        description: Which package to build
+        type: choice
+        options: [all, macos-arm64, windows-x64, linux-x64]
+        default: all
 
 permissions:
   contents: write
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        env:
+          TARGET: ${{ inputs.target || 'all' }}
+        run: |
+          all='[{"target":"macos-arm64","runner":"macos-15"},{"target":"windows-x64","runner":"windows-2022"},{"target":"linux-x64","runner":"ubuntu-22.04"}]'
+          if [ "$TARGET" = all ]; then m="$all"; else m=$(jq -c --arg t "$TARGET" 'map(select(.target == $t))' <<<"$all"); fi
+          echo "matrix={\"include\":$m}" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.target }}
+    needs: plan
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { target: macos-arm64, runner: macos-15 }
-          - { target: windows-x64, runner: windows-2022 }
-          - { target: linux-x64, runner: ubuntu-22.04 }
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     env:

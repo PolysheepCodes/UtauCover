@@ -166,11 +166,16 @@ def run(gui: bool = False) -> int:
     if gui:
         def window():
             env = dict(os.environ, UTAUCOVER_GUI_SELFTEST="1")
-            p = subprocess.run([sys.executable, "-m", "utaucover.gui.app"], capture_output=True, text=True,
-                               timeout=180, env=env)
-            line = next((l for l in p.stderr.splitlines() if l.startswith("SELFTEST")), None)
+            try:
+                p = subprocess.run([sys.executable, "-m", "utaucover.gui.app"], capture_output=True, timeout=240,
+                                   env=env)
+            except subprocess.TimeoutExpired as e:
+                err = e.stderr.decode("utf-8", "replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
+                raise RuntimeError("the window didn't finish in 240 s. Its output:\n" + err[-6000:]) from None
+            err = p.stderr.decode("utf-8", "replace")
+            line = next((l for l in err.splitlines() if l.startswith("SELFTEST ")), None)
             if not line:
-                raise RuntimeError((p.stderr or p.stdout)[-800:])
+                raise RuntimeError(err[-6000:] or p.stdout.decode("utf-8", "replace")[-2000:])
             return line[9:]
         r.check("window", window)
 

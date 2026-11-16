@@ -215,14 +215,27 @@ def _icon() -> str | None:
     return None
 
 
+def _selftest_trace(msg: str):
+    if os.environ.get("UTAUCOVER_GUI_SELFTEST"):
+        print(f"SELFTEST-STEP {msg}", file=sys.stderr, flush=True)
+
+
 def main():
+    if os.environ.get("UTAUCOVER_GUI_SELFTEST"):
+        # if the window hangs, show where: every thread's stack, before the test gives up on it
+        import faulthandler
+        import logging
+        faulthandler.dump_traceback_later(int(os.environ.get("UTAUCOVER_GUI_SELFTEST_DUMP", "150")), exit=True)
+        logging.basicConfig(level=logging.DEBUG, stream=sys.stderr)
+    _selftest_trace("importing the web view")
     import webview
     _log_to_file()
     os.environ.setdefault("TQDM_DISABLE", "1")
     import logging
     import warnings
     warnings.filterwarnings("ignore")
-    logging.getLogger().setLevel(logging.ERROR)
+    if not os.environ.get("UTAUCOVER_GUI_SELFTEST"):
+        logging.getLogger().setLevel(logging.ERROR)
 
     if _gui_backend() == "qt":
         # Name the Qt application so the desktop matches the window to utaucover.desktop (icon, taskbar)
@@ -239,6 +252,7 @@ def main():
     api.window = window
 
     def bind(win):
+        _selftest_trace("window created, binding events")
         from webview.dom import DOMEventHandler
 
         def on_drop(e):
@@ -264,6 +278,7 @@ def main():
 
         if os.environ.get("UTAUCOVER_GUI_SELFTEST"):
             import time
+            _selftest_trace("page loaded, checking the form")
             for _ in range(40):
                 n = win.evaluate_js("document.querySelectorAll('#singer option').length")
                 if n and int(n) > 1:
@@ -303,6 +318,7 @@ def main():
         kwargs["gui"] = _gui_backend()
     if _icon():
         kwargs["icon"] = _icon()
+    _selftest_trace(f"starting the window ({kwargs or 'default backend'})")
     webview.start(bind, window, **kwargs)
 
 
