@@ -48,11 +48,14 @@ Mac.
 
 - **Push a tag** (`git tag v0.7.0 && git push origin v0.7.0`): the packages are attached to a draft GitHub
   release. Check it, then publish.
-- **Actions → Build packages → Run workflow**: the packages are kept as downloadable artifacts for 7 days.
+- **Every push to `main`** that changes the app or its packaging, and **Actions → Build packages → Run
+  workflow** (which can build just one OS): the packages are kept as downloadable artifacts for 7 days.
+- Besides each bundle's selftest (libraries, ffmpeg, a pitch track, basic-pitch, the separator, the window),
+  the Windows job tests the zip as a browser download leaves it (every file marked "from the internet") and
+  the installer's install → run → uninstall. The Linux job tests `install.sh`.
 
-A run takes about 15–25 minutes. On a private repository the free plan includes 2,000 minutes a month. macOS
-minutes count 10×, Windows 2×. Artifacts count against the 500 MB storage quota, but tagged release files
-don't. Public repositories have neither limit.
+A run takes about 25–35 minutes (Windows is the slowest). The repository is public, so GitHub Actions
+minutes and artifact storage are free.
 
 ### Signing
 
