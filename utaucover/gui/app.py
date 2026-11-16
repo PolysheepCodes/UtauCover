@@ -25,7 +25,9 @@ def _dialog(kind: str):
 
 class Api:
     def __init__(self):
-        self.window: webview.Window | None = None
+        # private (leading underscore): pywebview hands every public attribute to the page and walks into
+        # it, and on Windows walking the native window object never ends (the window hung on start)
+        self._window: webview.Window | None = None
         self._busy = False
 
     # ---- helpers called from JS -------------------------------------------------
@@ -63,7 +65,7 @@ class Api:
         """Let the user point at a UtauV / OpenUtau folder the search didn't find."""
         from .. import apps
         from ..paths import save_settings, settings
-        r = self.window.create_file_dialog(_dialog("folder"))
+        r = self._window.create_file_dialog(_dialog("folder"))
         if not r:
             return None
         folder = Path(r[0] if isinstance(r, (list, tuple)) else r)
@@ -87,17 +89,17 @@ class Api:
 
     def browse_song(self):
         exts = ";".join(f"*{e}" for e in sorted(AUDIO_EXTS))
-        r = self.window.create_file_dialog(_dialog("open"), file_types=(f"Audio ({exts})", "All files (*.*)"))
+        r = self._window.create_file_dialog(_dialog("open"), file_types=(f"Audio ({exts})", "All files (*.*)"))
         return r[0] if r else None
 
     def browse_lyrics(self):
-        r = self.window.create_file_dialog(_dialog("open"), file_types=("Text (*.txt;*.lrc)", "All files (*.*)"))
+        r = self._window.create_file_dialog(_dialog("open"), file_types=("Text (*.txt;*.lrc)", "All files (*.*)"))
         if not r:
             return None
         return {"path": r[0], "text": self.read_text(r[0])}
 
     def browse_folder(self):
-        r = self.window.create_file_dialog(_dialog("folder"))
+        r = self._window.create_file_dialog(_dialog("folder"))
         return r[0] if r else None
 
     def read_text(self, path):
@@ -134,8 +136,8 @@ class Api:
         return {"ok": True}
 
     def _js(self, fn: str, *args):
-        if self.window:
-            self.window.evaluate_js(f"{fn}({', '.join(json.dumps(a, ensure_ascii=False) for a in args)})")
+        if self._window:
+            self._window.evaluate_js(f"{fn}({', '.join(json.dumps(a, ensure_ascii=False) for a in args)})")
 
     def _build(self, o: dict):
         from ..pipeline import CoverOptions, build_cover
@@ -249,7 +251,7 @@ def main():
     window = webview.create_window(f"UtauCover {__version__}", str(HERE / "index.html"), js_api=api,
                                    width=880, height=900, min_size=(640, 640),
                                    background_color="#16151c")
-    api.window = window
+    api._window = window
 
     def bind(win):
         _selftest_trace("window created, binding events")
