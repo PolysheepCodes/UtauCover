@@ -1,0 +1,2 @@
+# Extra packages for the packaged app, resolved together with pyproject.toml (see overrides.txt).
+diffq-fixed>=0.2 ; sys_platform == "linux"

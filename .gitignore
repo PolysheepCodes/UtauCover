@@ -1,0 +1,10 @@
+build/
+dist/
+__pycache__/
+*.egg-info/
+.venv
+.DS_Store
+# local only: paths on this computer / the development launcher
+.mcp.json
+UtauCover.app/
+.venv 2/

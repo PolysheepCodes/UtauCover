@@ -1,0 +1,12 @@
+# Dependency overrides for the packaged app (uv pip compile --overrides).
+#
+# basic-pitch asks for TensorFlow (~600 MB) on Windows/Linux, but it runs its bundled ONNX model with
+# onnxruntime (already installed for stem separation), so TensorFlow is left out.
+tensorflow ; sys_platform == "never"
+tensorflow-macos ; sys_platform == "never"
+tflite-runtime ; sys_platform == "never"
+# Whisper only uses Triton for CUDA kernels; the packaged app runs Whisper on CPU / Apple GPU.
+triton ; sys_platform == "never"
+# diffq (Demucs instrument stems) has no Python 3.11 wheels for Linux; diffq-fixed (same module, added in
+# bundle-requirements.in) does, so Linux builds need no C compiler.
+diffq>=0.2 ; sys_platform == "darwin"

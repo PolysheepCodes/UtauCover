@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "utaucover"
+version = "0.7.0"
+description = "Split a song into stems, chart its vocals into OpenUTAU/UtauV tracks, and fill in lyrics automatically."
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "numpy",
+    "scipy",
+    "librosa",
+    "soundfile",
+    "pyyaml",
+    "mido",
+    "torch",
+    "torchaudio",
+    "torchcrepe",
+    "torchfcpe",
+    "audio-separator",
+    "onnxruntime",
+    "stable-ts",
+    "basic-pitch",
+    "setuptools<80",   # resampy (via basic-pitch) still imports pkg_resources
+    "pykakasi",
+    "pyphen",
+    "pronouncing",       # CMU dictionary: English syllable counts
+    "pypinyin",
+    "mcp[cli]",
+    "pywebview",
+    "pythonnet",         # reads the installed phonemizer list from UtauV / OpenUTAU (and hosts the window on Windows)
+    "certifi",
+    # Linux window: Qt's web view via PySide6 (LGPL; pywebview's GTK backend needs system packages)
+    "PySide6; sys_platform == 'linux'",
+    "QtPy; sys_platform == 'linux'",
+]
+
+[project.scripts]
+utaucover = "utaucover.cli:main"
+utaucover-mcp = "utaucover.mcp_server:main"
+utaucover-gui = "utaucover.gui.app:main"
+
+[tool.setuptools.packages.find]
+include = ["utaucover*"]
+
+[tool.setuptools.package-data]
+utaucover = ["templates/*.yaml", "gui/*.html"]

@@ -1,0 +1,158 @@
+# Builds UtauCover's packages on each OS, tests them, and (for a v* tag) attaches them to a draft release.
+#
+#   macOS    UtauCover-<v>-macos-arm64.dmg
+#   Windows  UtauCover-<v>-windows-x64-portable.zip, UtauCover-<v>-windows-x64-setup.exe
+#   Linux    UtauCover-<v>-linux-x64.tar.gz
+#
+# Runs on every push to main that changes the app or its packaging (packages kept as workflow artifacts for
+# 7 days), on Actions > "Build packages" > Run workflow, and for a tag (git tag v0.7.0 && git push origin
+# v0.7.0), which attaches the packages to a draft release.
+#
+# Optional macOS signing + notarization (so other Macs open the app without a warning): add these repository
+# secrets: MACOS_CERT_P12 (base64 of a "Developer ID Application" .p12), MACOS_CERT_PASSWORD, APPLE_ID,
+# APPLE_TEAM_ID, APPLE_APP_PASSWORD (an app-specific password). Without them the app is ad-hoc signed.
+name: Build packages
+
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+    paths: ["utaucover/**", "packaging/**", "pyproject.toml", ".github/workflows/build.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: macos-arm64, runner: macos-14 }
+          - { target: windows-x64, runner: windows-2022 }
+          - { target: linux-x64, runner: ubuntu-22.04 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: packaging/locks/${{ matrix.target }}.txt
+
+      - name: Linux libraries for the window test
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb xauth libxcb-cursor0 libxkbcommon-x11-0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1 libegl1 \
+            libgl1 libopengl0 libnss3 libasound2 libxkbfile1 libxcomposite1 libxdamage1 libxrandr2 libxtst6 \
+            libxshmfence1 libgbm1 libfontconfig1 libdbus-1-3
+
+      - name: Inno Setup and WebView2 (for the window test)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          choco install webview2-runtime -y --no-progress
+
+      - name: Signing certificate (macOS, optional)
+        if: runner.os == 'macOS' && env.MACOS_CERT_P12 != ''
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/build.keychain"; KCPW="$(uuidgen)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KCPW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPW" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPW" "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          ID="$(security find-identity -v -p codesigning "$KC" | grep 'Developer ID Application' | head -1 | sed -E 's/.*"(.*)"/\1/')"
+          echo "MACOS_SIGN_IDENTITY=$ID" >> "$GITHUB_ENV"
+          if [ -n "$APPLE_ID" ]; then
+            xcrun notarytool store-credentials utaucover --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_PASSWORD" --keychain "$KC"
+            echo "MACOS_NOTARY_PROFILE=utaucover" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build and test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then RUN="xvfb-run -a"; else RUN=""; fi
+          $RUN uv run --no-project --python 3.11 python packaging/build.py --target ${{ matrix.target }} --gui-test --out dist
+
+      # Windows: test the packages the way people get them. Explorer marks every file unzipped from a
+      # download as "from the internet" (which once kept the window from opening), so mark them the same way.
+      - name: Test the portable zip as downloaded (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist\*-portable.zip | Select-Object -First 1
+          $dest = Join-Path $env:RUNNER_TEMP "downloaded"
+          Expand-Archive $zip.FullName -DestinationPath $dest
+          $mark = "[ZoneTransfer]`r`nZoneId=3`r`nHostUrl=https://github.com/"
+          Get-ChildItem $dest -Recurse -File | ForEach-Object { Set-Content -LiteralPath $_.FullName -Stream Zone.Identifier -Value $mark }
+          $app = Join-Path $dest "UtauCover"
+          Write-Host "--- without the fix, .NET refuses the marked files (expected to fail):"
+          & "$app\runtime\python.exe" -I -c "import clr; print('import clr: ok')"
+          Write-Host "--- the app itself:"
+          & "$app\utaucover-cli.exe" selftest --gui
+          if ($LASTEXITCODE -ne 0) { throw "selftest of the downloaded zip failed" }
+
+      - name: Test the installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\*-setup.exe | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/CURRENTUSER", "/NORESTART", "/LOG=$env:RUNNER_TEMP\setup.log" -Wait
+          $app = Join-Path $env:LOCALAPPDATA "Programs\UtauCover"
+          if (-not (Test-Path "$app\UtauCover.exe")) { Get-Content "$env:RUNNER_TEMP\setup.log" -Tail 30; throw "not installed to $app" }
+          & "$app\utaucover-cli.exe" selftest
+          if ($LASTEXITCODE -ne 0) { throw "selftest of the installed app failed" }
+          Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" -Wait
+          # the uninstaller hands over to a copy of itself in TEMP and returns early: give it time
+          for ($i = 0; $i -lt 60 -and (Test-Path "$app\UtauCover.exe"); $i++) { Start-Sleep 1 }
+          if (Test-Path "$app\UtauCover.exe") { throw "uninstall left the app behind" }
+          Write-Host "installer: installs per-user without admin, runs, uninstalls cleanly"
+
+      - name: Test install.sh (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP"/UtauCover-*/
+          ./install.sh --check
+          ./install.sh --no-deps
+          test -x "$HOME/.local/share/UtauCover/app/UtauCover"
+          test -f "$HOME/.local/share/applications/utaucover.desktop"
+          "$HOME/.local/bin/utaucover" version
+          ./install.sh --uninstall
+          test ! -e "$HOME/.local/bin/utaucover"
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          draft: true
+          generate_release_notes: true
+
+      - name: Keep as workflow artifact
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: UtauCover-${{ matrix.target }}
+          path: dist/*
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
